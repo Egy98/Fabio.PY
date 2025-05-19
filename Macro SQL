@@ -1,0 +1,152 @@
+Dim conn400 As ADODB.Connection
+Dim dsn As String
+Dim usr As String
+Dim psw As String
+
+Public Sub connDB2()
+    Dim rs As ADODB.Recordset
+    Dim sql As String
+    Dim ws As Worksheet
+    Dim riga As Long, i As Integer
+    Dim lastCol As Integer
+    Dim data As Date: data = Now
+    Dim dataPeriodo As String
+    Dim dataInizio As String
+    Dim dataFine As String
+    Dim col As Long
+
+    On Error GoTo ErrorHandler
+
+    ' Imposta le date per il report
+    dataPeriodo = Format(Date, "MMMM yyyy")
+    dataInizio = Format(Date, "yyyymm") & "01"
+    dataFine = Format(Date, "yyyymm") & Format(DateSerial(Year(Date), Month(Date) + 1, 0), "dd")
+
+    ' Costruzione query da range B3:O19
+    sql = ""
+    With ThisWorkbook.Sheets(1)
+        For riga = 3 To 19
+            For col = 2 To 15 ' da B a O
+                If Trim(.Cells(riga, col).Value) <> "" Then
+                    sql = sql & vbCrLf & .Cells(riga, col).Value
+                End If
+            Next col
+        Next riga
+    End With
+    sql = Trim(sql)
+
+    If sql = "" Then
+        MsgBox "Nessuna query trovata nel range B3:O19.", vbExclamation
+        Exit Sub
+    End If
+
+    ' Apertura Connessione
+    If Not iSeriesConnect() Then
+        MsgBox "Connessione al DB2 fallita.", vbCritical
+        Exit Sub
+    End If
+
+    ' Esecuzione query
+    Set rs = New ADODB.Recordset
+    rs.CursorLocation = adUseClient
+    rs.Open sql, conn400, adOpenForwardOnly, adLockReadOnly, adCmdText
+
+    ' Gestione foglio "SQL"
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("SQL")
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        ws.Name = "SQL"
+    End If
+    On Error GoTo 0
+
+    ' Pulisci e prepara il foglio
+    ws.Cells.Clear
+    lastCol = rs.Fields.Count
+
+    ' Intestazioni
+    For i = 0 To lastCol - 1
+        With ws.Cells(1, i + 1)
+            .Value = rs.Fields(i).Name
+            .Font.Bold = True
+            .Interior.Color = RGB(217, 217, 217)
+            .HorizontalAlignment = xlCenter
+        End With
+    Next i
+
+    ' Dati
+    riga = 2
+    Do Until rs.EOF
+        For i = 0 To lastCol - 1
+            If IsNumeric(rs.Fields(i).Value) And Not IsNull(rs.Fields(i).Value) Then
+                ws.Cells(riga, i + 1).Value = CDbl(rs.Fields(i).Value)
+            Else
+                ws.Cells(riga, i + 1).Value = IIf(IsNull(rs.Fields(i).Value), "", rs.Fields(i).Value)
+            End If
+        Next i
+        rs.MoveNext
+        riga = riga + 1
+    Loop
+
+    ' Formattazione
+    With ws
+        With .Range(.Cells(1, 1), .Cells(riga - 1, lastCol))
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+        End With
+
+        .Activate
+        .Rows(2).Select
+        ActiveWindow.FreezePanes = True
+        .Columns.AutoFit
+
+        .Cells(1, lastCol + 2).Value = "Esecuzione: " & Format(data, "dd/mm/yyyy hh:mm:ss")
+        .Cells(2, lastCol + 2).WrapText = True
+    End With
+
+    MsgBox "Query generata con successo " & Format(data, "dd/mm/yyyy hh:mm:ss"), vbInformation
+
+Cleanup:
+    On Error Resume Next
+    rs.Close
+    Set rs = Nothing
+    iSeriesDisconnect
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Errore durante la generazione: " & Err.Description, vbCritical
+    Resume Cleanup
+End Sub
+
+Private Function iSeriesConnect() As Boolean
+    On Error GoTo ErroreConnessione
+
+    dsn = Trim(InputBox("Inserisci DSN:"))
+    If dsn = "" Then Exit Function
+
+    usr = Trim(InputBox("Inserisci utente:"))
+    If usr = "" Then Exit Function
+
+    psw = Trim(InputBox("Inserisci password:"))
+    If psw = "" Then Exit Function
+
+    Set conn400 = New ADODB.Connection
+    conn400.ConnectionString = "DSN=" & dsn & ";UID=" & usr & ";PWD=" & psw & ";Connect Timeout=30"
+    conn400.Open
+
+    iSeriesConnect = (conn400.State = 1)
+    Exit Function
+
+ErroreConnessione:
+    MsgBox "Errore di connessione: " & Err.Description, vbCritical
+    iSeriesConnect = False
+End Function
+
+Private Function iSeriesDisconnect() As Boolean
+    On Error Resume Next
+    If Not conn400 Is Nothing Then
+        If conn400.State = 1 Then conn400.Close
+        Set conn400 = Nothing
+    End If
+    iSeriesDisconnect = True
+End Function
